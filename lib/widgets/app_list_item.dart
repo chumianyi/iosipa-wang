@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/app_models.dart';
-import 'detail_screen.dart';
+import '../screens/detail_screen.dart';
 
 class AppListItem extends StatelessWidget {
   final AppInfo app;

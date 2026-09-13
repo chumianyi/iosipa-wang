@@ -33,6 +33,12 @@ jobs:
           sed -i 's/android:label="iosipa_wang"/android:label="iosipa.wang"/' android/app/src/main/AndroidManifest.xml
           grep 'android:label' android/app/src/main/AndroidManifest.xml
 
+      - name: Upgrade Kotlin version
+        run: |
+          sed -i 's/kotlin_version = .*/kotlin_version = "1.9.22"/' android/settings.gradle 2>/dev/null || true
+          sed -i 's/id "org.jetbrains.kotlin.android" version .*/id "org.jetbrains.kotlin.android" version "1.9.22"/' android/settings.gradle 2>/dev/null || true
+          cat android/settings.gradle | grep -i kotlin || true
+
       - name: Enable internet permission
         run: |
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
