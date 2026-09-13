@@ -43,7 +43,7 @@ class ApiService {
               if (eq > 0) {
                 final name = parts.substring(0, eq).trim();
                 final value = parts.substring(eq + 1).trim();
-                if (name.isNotEmpty && !name.startsWith('$')) {
+                if (name.isNotEmpty && !name.startsWith('\$')) {
                   _cookies[name] = value;
                 }
               }
