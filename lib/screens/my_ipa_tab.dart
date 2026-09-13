@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:external_path/external_path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'sign_screen.dart';
@@ -63,20 +62,21 @@ class _MyIpaTabState extends State<MyIpaTab> {
     final List<IpaFile> found = [];
     final Set<String> seen = {};
 
-    // 扫描目录列表
-    final List<String> dirs = [];
-    try {
-      final downloads = await ExternalPath.getExternalStoragePublicDirectory(
-          ExternalPath.DIRECTORY_DOWNLOADS);
-      dirs.add(downloads);
-    } catch (_) {}
-    try {
-      final ext = await ExternalPath.getExternalStorageDirectories();
-      dirs.addAll(ext);
-    } catch (_) {}
+    // 扫描目录列表（硬编码常见下载目录）
+    final List<String> dirs = [
+      '/storage/emulated/0/Download',
+      '/storage/emulated/0/Downloads',
+      '/storage/emulated/0',
+      '/sdcard/Download',
+      '/sdcard',
+    ];
     try {
       final appDoc = await getApplicationDocumentsDirectory();
       dirs.add(appDoc.path);
+    } catch (_) {}
+    try {
+      final ext = await getExternalStorageDirectory();
+      if (ext != null) dirs.add(ext.path);
     } catch (_) {}
 
     for (var dir in dirs) {
