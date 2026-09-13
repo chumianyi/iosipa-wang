@@ -1,7 +1,7 @@
 name: iosipa_wang
-description: iosipa.wang - 88ipa签到与IPA下载工具
+description: iosipa.wang - 88ipa第三方客户端
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -16,6 +16,11 @@ dependencies:
   url_launcher: ^6.2.5
   html: ^0.15.0
   flutter_animate: ^4.3.0
+  file_picker: ^8.0.0
+  permission_handler: ^11.3.0
+  external_path: ^1.0.3
+  path_provider: ^2.1.2
+  open_filex: ^4.4.0
 
 dev_dependencies:
   flutter_test:

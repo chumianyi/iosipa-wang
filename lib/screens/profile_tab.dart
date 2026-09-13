@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../models/app_models.dart';
 import 'login_screen.dart';
+import 'about_screen.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -42,7 +43,6 @@ class _ProfileTabState extends State<ProfileTab> {
       _signingIn = false;
       if (result['success'] == true) {
         _signResult = '✅ ${result['message']}';
-        _loadUserInfo();
       } else if (result['message'] == '__NOT_LOGGED_IN__') {
         _forceLogout();
       } else {
@@ -81,7 +81,6 @@ class _ProfileTabState extends State<ProfileTab> {
   @override
   Widget build(BuildContext context) {
     final email = _userInfo?.email ?? ApiService().savedEmail;
-    final points = _userInfo?.points ?? 0;
 
     return Scaffold(
       body: Column(
@@ -109,8 +108,8 @@ class _ProfileTabState extends State<ProfileTab> {
                 const SizedBox(height: 8),
                 Text(
                   email.isEmpty ? '已登录' : email,
-                  style:
-                      TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 14),
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.8), fontSize: 14),
                 ),
               ],
             ),
@@ -122,37 +121,6 @@ class _ProfileTabState extends State<ProfileTab> {
                     child: Column(
                       children: [
                         const SizedBox(height: 24),
-                        // 积分卡片
-                        Card(
-                          margin: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceAround,
-                              children: [
-                                _buildStat('剩余积分', points > 0 ? points.toString() : '--',
-                                    Icons.stars),
-                                Container(
-                                  width: 1, height: 40, color: Colors.grey[300],
-                                ),
-                                _buildStat('账号', email.split('@').first,
-                                    Icons.account_circle),
-                              ],
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton.icon(
-                              onPressed: _loadUserInfo,
-                              icon: const Icon(Icons.refresh, size: 18),
-                              label: const Text('刷新积分'),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 32),
                         // 签到大按钮
                         Container(
                           width: 180,
@@ -205,7 +173,42 @@ class _ProfileTabState extends State<ProfileTab> {
                             child: Text(_signResult!,
                                 style: const TextStyle(fontSize: 15)),
                           ),
-                        const SizedBox(height: 40),
+                        const SizedBox(height: 32),
+                        // 功能列表
+                        Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Column(
+                            children: [
+                              ListTile(
+                                leading: const Icon(Icons.info_outline,
+                                    color: Color(0xFF667EEA)),
+                                title: const Text('关于 iosipa.wang'),
+                                subtitle: const Text('版本 2.0.0 · API列表与免责声明'),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => const AboutScreen()),
+                                ),
+                              ),
+                              const Divider(height: 1),
+                              ListTile(
+                                leading: const Icon(Icons.system_update,
+                                    color: Color(0xFF667EEA)),
+                                title: const Text('检查更新'),
+                                subtitle: const Text('当前版本 2.0.0'),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                        content: Text('当前已是最新版本 v2.0.0')),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 24),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
                           child: SizedBox(
@@ -224,27 +227,13 @@ class _ProfileTabState extends State<ProfileTab> {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 24),
                       ],
                     ),
                   ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildStat(String label, String value, IconData icon) {
-    return Column(
-      children: [
-        Icon(icon, color: const Color(0xFF667EEA), size: 28),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 4),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-      ],
     );
   }
 }

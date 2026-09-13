@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/app_models.dart';
@@ -46,32 +47,14 @@ class _DetailScreenState extends State<DetailScreen> {
     }
     if (result['success'] == true) {
       final link = result['link'].toString();
-      final cost = result['cost'] ?? 0;
-      // 积分消耗提示
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('下载确认'),
-          content: Text(cost != 0
-              ? '本次下载将消耗 $cost 积分，是否继续？'
-              : '即将在浏览器中打开下载链接，是否继续？'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消')),
-            TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('确定')),
-          ],
-        ),
-      );
-      if (confirmed == true && link.isNotEmpty) {
+      if (link.isNotEmpty) {
         final uri = Uri.parse(link);
         if (await canLaunchUrl(uri)) {
           await launchUrl(uri, mode: LaunchMode.externalApplication);
           _showSnack('已在浏览器中打开下载链接');
         } else {
-          _showSnack('无法打开浏览器，请复制链接下载');
+          await Clipboard.setData(ClipboardData(text: link));
+          _showSnack('无法打开浏览器，链接已复制');
         }
       }
     } else {
@@ -93,13 +76,22 @@ class _DetailScreenState extends State<DetailScreen> {
       final link = result['link'].toString();
       if (link.isNotEmpty) {
         final itmsUrl = 'itms-services://?action=download-manifest&url=$link';
-        final uri = Uri.parse(itmsUrl);
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-          _showSnack('已请求安装，请在iOS设备上确认');
-        } else {
-          _showSnack('请在iOS设备上打开此链接进行安装');
-        }
+        // 安卓设备无法安装IPA：自动复制链接到剪贴板
+        await Clipboard.setData(ClipboardData(text: link));
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('安卓设备无法安装IPA'),
+            content: const Text(
+                'IPA是iOS应用安装包，安卓设备无法直接安装。\n\n安装链接已自动复制到剪贴板，请在苹果(iOS)设备上打开此链接进行安装。'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('知道了')),
+            ],
+          ),
+        );
       }
     } else {
       _showSnack(result['message'] ?? '获取安装链接失败');
