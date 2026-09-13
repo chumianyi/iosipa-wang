@@ -130,7 +130,7 @@ class _ProfileTabState extends State<ProfileTab> {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceAround,
                               children: [
-                                _buildStat('剩余积分', points.toString(),
+                                _buildStat('剩余积分', points > 0 ? points.toString() : '--',
                                     Icons.stars),
                                 Container(
                                   width: 1, height: 40, color: Colors.grey[300],
@@ -138,6 +138,17 @@ class _ProfileTabState extends State<ProfileTab> {
                                 _buildStat('账号', email.split('@').first,
                                     Icons.account_circle),
                               ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: _loadUserInfo,
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: const Text('刷新积分'),
                             ),
                           ),
                         ),

@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:html/parser.dart' as html_parser;
-import 'package:html/dom.dart';
 import '../models/app_models.dart';
 
 class ApiService {
@@ -18,6 +17,9 @@ class ApiService {
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 20),
+      responseType: ResponseType.plain, // 关键：始终返回原始字符串，不自动解析JSON
+      validateStatus: (status) => status != null && status < 500,
+      followRedirects: false,
       headers: {
         'User-Agent':
             'Mozilla/5.0 (Android 13; Mobile) AppleWebKit/537.36 Chrome/128.0.0.0 Mobile Safari/537.36',
@@ -79,6 +81,17 @@ class ApiService {
     await _prefs?.remove('user_email');
   }
 
+  /// 统一解析API响应：如果返回HTML说明未登录，如果是JSON则解析
+  Map<String, dynamic>? _parseApiResponse(String body) {
+    final trimmed = body.trim();
+    if (trimmed.startsWith('<')) return null; // HTML登录页
+    try {
+      return jsonDecode(trimmed) as Map<String, dynamic>;
+    } catch (_) {
+      return {'__parse_error__': body};
+    }
+  }
+
   // ============ 登录 ============
   Future<Map<String, dynamic>> login(String email, String password) async {
     try {
@@ -96,48 +109,51 @@ class ApiService {
           contentType: Headers.formUrlEncodedContentType,
         ),
       );
-      final data = response.data;
-      if (data is Map) {
-        final status = data['status'] ?? '';
-        final msg = data['message'] ?? '';
-        if (status == 'success') {
-          await _prefs?.setString('user_email', email);
-          return {'success': true, 'message': msg.toString()};
-        }
-        return {'success': false, 'message': msg.toString()};
+      final body = response.data.toString();
+      final data = _parseApiResponse(body);
+      if (data == null) {
+        return {'success': false, 'message': '登录失败：返回异常页面'};
       }
-      return {'success': false, 'message': '响应格式错误'};
+      if (data['__parse_error__'] != null) {
+        return {'success': false, 'message': '响应解析失败'};
+      }
+      final status = data['status'] ?? '';
+      final msg = data['message'] ?? '';
+      if (status == 'success') {
+        await _prefs?.setString('user_email', email);
+        return {'success': true, 'message': msg.toString()};
+      }
+      return {'success': false, 'message': msg.toString()};
     } catch (e) {
       return {'success': false, 'message': '网络错误: $e'};
     }
   }
 
   // ============ 签到 ============
+  // 注意：jQuery原版签到POST没有body，没有Content-Type
   Future<Map<String, dynamic>> signIn() async {
     try {
       final response = await _dio.post(
         '$baseUrl/user/api/sign_in',
-        data: {},
         options: Options(
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer': '$baseUrl/user/dashboard.html',
           },
-          contentType: Headers.formUrlEncodedContentType,
+          // 不设置contentType，不发送body —— 模拟jQuery无data的POST
         ),
       );
       final body = response.data.toString();
-      if (body.trimLeft().startsWith('<')) {
+      final data = _parseApiResponse(body);
+      if (data == null) {
         return {'success': false, 'message': '__NOT_LOGGED_IN__'};
       }
-      try {
-        final data = jsonDecode(body);
-        final status = data['status'] ?? '';
-        final msg = data['message'] ?? '';
-        return {'success': status == 'success', 'message': msg.toString()};
-      } catch (_) {
-        return {'success': false, 'message': '解析失败'};
+      if (data['__parse_error__'] != null) {
+        return {'success': false, 'message': '签到响应解析失败'};
       }
+      final status = data['status'] ?? '';
+      final msg = data['message'] ?? '';
+      return {'success': status == 'success', 'message': msg.toString()};
     } catch (e) {
       return {'success': false, 'message': '网络错误: $e'};
     }
@@ -148,9 +164,10 @@ class ApiService {
     try {
       final response = await _dio.get(
         '$baseUrl$path',
-        options: Options(headers: {
-          'Referer': '$baseUrl/',
-        }),
+        options: Options(
+          headers: {'Referer': '$baseUrl/'},
+          followRedirects: true,
+        ),
       );
       return response.data.toString();
     } catch (_) {
@@ -258,7 +275,8 @@ class ApiService {
 
     String version = '';
     String size = '';
-    final captions = document.querySelectorAll('div.mdui-float-left.mdui-typo-caption-opacity');
+    final captions =
+        document.querySelectorAll('div.mdui-float-left.mdui-typo-caption-opacity');
     for (var i = 0; i < captions.length; i++) {
       final text = captions[i].text.trim();
       final next = captions[i].nextElementSibling;
@@ -302,17 +320,28 @@ class ApiService {
     String email = _prefs?.getString('user_email') ?? '';
     int points = 0;
 
-    // 尝试从HTML中提取积分
-    final pointMatch = RegExp(r'(\d+)\s*(?:积分|点|credits|points)').firstMatch(html);
-    if (pointMatch != null) {
-      points = int.tryParse(pointMatch.group(1)!) ?? 0;
+    // 从HTML中提取积分 —— 多种模式匹配
+    // 模式1: "积分" 后面跟数字
+    final p1 = RegExp(r'积分[：:\s]*([0-9,]+)').firstMatch(html);
+    if (p1 != null) points = int.tryParse(p1.group(1)!.replaceAll(',', '')) ?? 0;
+
+    // 模式2: 数字 + "积分"
+    if (points == 0) {
+      final p2 = RegExp(r'([0-9,]+)\s*积分').firstMatch(html);
+      if (p2 != null) points = int.tryParse(p2.group(1)!.replaceAll(',', '')) ?? 0;
     }
 
-    // 尝试提取邮箱
-    final emailMatch = RegExp(r'[\w.+-]+@[\w-]+\.[\w.-]+').firstMatch(html);
-    if (emailMatch != null) {
-      email = emailMatch.group(0)!;
+    // 模式3: 剩余/可用 积分
+    if (points == 0) {
+      final p3 = RegExp(r'(?:剩余|可用|我的)?\s*积分[：:\s]*([0-9,]+)',
+              caseSensitive: false)
+          .firstMatch(html);
+      if (p3 != null) points = int.tryParse(p3.group(1)!.replaceAll(',', '')) ?? 0;
     }
+
+    // 提取邮箱
+    final emailMatch = RegExp(r'[\w.+-]+@[\w-]+\.[\w.-]+').firstMatch(html);
+    if (emailMatch != null) email = emailMatch.group(0)!;
 
     return UserInfo(email: email, points: points, rawHtml: html);
   }
@@ -332,16 +361,22 @@ class ApiService {
         ),
       );
       final body = response.data.toString();
-      if (body.trimLeft().startsWith('<')) {
+      final data = _parseApiResponse(body);
+      if (data == null) {
         return {'success': false, 'message': '__NOT_LOGGED_IN__'};
       }
-      final data = jsonDecode(body);
+      if (data['__parse_error__'] != null) {
+        return {'success': false, 'message': '服务器返回格式异常，请重试'};
+      }
       if (data['status'] == 'success') {
         final link = data['data']?['ipa_download_link'] ?? '';
         final cost = data['data']?['cost'] ?? data['data']?['score'] ?? 0;
         return {'success': true, 'link': link.toString(), 'cost': cost};
       }
-      return {'success': false, 'message': data['message'] ?? '获取失败'};
+      return {
+        'success': false,
+        'message': data['message'] ?? '获取下载链接失败'
+      };
     } catch (e) {
       return {'success': false, 'message': '网络错误: $e'};
     }
@@ -362,15 +397,21 @@ class ApiService {
         ),
       );
       final body = response.data.toString();
-      if (body.trimLeft().startsWith('<')) {
+      final data = _parseApiResponse(body);
+      if (data == null) {
         return {'success': false, 'message': '__NOT_LOGGED_IN__'};
       }
-      final data = jsonDecode(body);
+      if (data['__parse_error__'] != null) {
+        return {'success': false, 'message': '服务器返回格式异常，请重试'};
+      }
       if (data['status'] == 'success') {
         final link = data['data']?['plist_link'] ?? '';
         return {'success': true, 'link': link.toString()};
       }
-      return {'success': false, 'message': data['message'] ?? '获取失败'};
+      return {
+        'success': false,
+        'message': data['message'] ?? '获取安装链接失败'
+      };
     } catch (e) {
       return {'success': false, 'message': '网络错误: $e'};
     }
