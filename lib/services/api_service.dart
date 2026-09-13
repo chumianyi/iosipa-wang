@@ -1,0 +1,380 @@
+import 'dart:convert';
+import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:html/parser.dart' as html_parser;
+import 'package:html/dom.dart';
+import '../models/app_models.dart';
+
+class ApiService {
+  static const String baseUrl = 'https://www.88ipa.com';
+  static final ApiService _instance = ApiService._internal();
+  factory ApiService() => _instance;
+
+  late Dio _dio;
+  SharedPreferences? _prefs;
+  Map<String, String> _cookies = {};
+
+  ApiService._internal() {
+    _dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 20),
+      headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Android 13; Mobile) AppleWebKit/537.36 Chrome/128.0.0.0 Mobile Safari/537.36',
+      },
+    ));
+    _dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        if (_cookies.isNotEmpty) {
+          options.headers['Cookie'] = _cookies.entries
+              .map((e) => '${e.key}=${e.value}')
+              .join('; ');
+        }
+        handler.next(options);
+      },
+      onResponse: (response, handler) {
+        final setCookie = response.headers['set-cookie'];
+        if (setCookie != null) {
+          for (var c in setCookie) {
+            final pairs = c.split(',');
+            for (var pair in pairs) {
+              final parts = pair.trim().split(';').first.trim();
+              final eq = parts.indexOf('=');
+              if (eq > 0) {
+                final name = parts.substring(0, eq).trim();
+                final value = parts.substring(eq + 1).trim();
+                if (name.isNotEmpty && !name.startsWith('$')) {
+                  _cookies[name] = value;
+                }
+              }
+            }
+          }
+          _saveCookies();
+        }
+        handler.next(response);
+      },
+    ));
+  }
+
+  Future<void> init() async {
+    _prefs = await SharedPreferences.getInstance();
+    final saved = _prefs!.getString('cookies');
+    if (saved != null) {
+      try {
+        final Map<String, dynamic> map = jsonDecode(saved);
+        _cookies = map.map((k, v) => MapEntry(k, v.toString()));
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _saveCookies() async {
+    await _prefs?.setString('cookies', jsonEncode(_cookies));
+  }
+
+  bool get isLoggedIn => _cookies.isNotEmpty;
+
+  Future<void> logout() async {
+    _cookies.clear();
+    await _prefs?.remove('cookies');
+    await _prefs?.remove('user_email');
+  }
+
+  // ============ 登录 ============
+  Future<Map<String, dynamic>> login(String email, String password) async {
+    try {
+      final response = await _dio.post(
+        '$baseUrl/user/api/login',
+        data: {
+          'userMail': email,
+          'userPass': password,
+        },
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': '$baseUrl/user/login.html',
+          },
+          contentType: Headers.formUrlEncodedContentType,
+        ),
+      );
+      final data = response.data;
+      if (data is Map) {
+        final status = data['status'] ?? '';
+        final msg = data['message'] ?? '';
+        if (status == 'success') {
+          await _prefs?.setString('user_email', email);
+          return {'success': true, 'message': msg.toString()};
+        }
+        return {'success': false, 'message': msg.toString()};
+      }
+      return {'success': false, 'message': '响应格式错误'};
+    } catch (e) {
+      return {'success': false, 'message': '网络错误: $e'};
+    }
+  }
+
+  // ============ 签到 ============
+  Future<Map<String, dynamic>> signIn() async {
+    try {
+      final response = await _dio.post(
+        '$baseUrl/user/api/sign_in',
+        data: {},
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': '$baseUrl/user/dashboard.html',
+          },
+          contentType: Headers.formUrlEncodedContentType,
+        ),
+      );
+      final body = response.data.toString();
+      if (body.trimLeft().startsWith('<')) {
+        return {'success': false, 'message': '__NOT_LOGGED_IN__'};
+      }
+      try {
+        final data = jsonDecode(body);
+        final status = data['status'] ?? '';
+        final msg = data['message'] ?? '';
+        return {'success': status == 'success', 'message': msg.toString()};
+      } catch (_) {
+        return {'success': false, 'message': '解析失败'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': '网络错误: $e'};
+    }
+  }
+
+  // ============ 获取HTML页面 ============
+  Future<String?> _fetchHtml(String path) async {
+    try {
+      final response = await _dio.get(
+        '$baseUrl$path',
+        options: Options(headers: {
+          'Referer': '$baseUrl/',
+        }),
+      );
+      return response.data.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ============ 解析应用列表 ============
+  List<AppInfo> _parseAppList(String html) {
+    final document = html_parser.parse(html);
+    final List<AppInfo> apps = [];
+    final seen = <String>{};
+
+    final containers = document.querySelectorAll('div.mdui-container-fluid');
+    for (var container in containers) {
+      final linkEl = container.querySelector('a[href*="/application/"]');
+      if (linkEl == null) continue;
+      final href = linkEl.attributes['href'] ?? '';
+      final id = href.replaceAll('/application/', '').replaceAll('.html', '');
+      if (id.isEmpty || !RegExp(r'^\d+$').hasMatch(id)) continue;
+      if (seen.contains(id)) continue;
+      seen.add(id);
+
+      String iconUrl = '';
+      final imgEl = container.querySelector('img');
+      if (imgEl != null) {
+        iconUrl = imgEl.attributes['src'] ?? '';
+        if (iconUrl.startsWith('//')) iconUrl = 'https:$iconUrl';
+        if (iconUrl.startsWith('/')) iconUrl = '$baseUrl$iconUrl';
+      }
+
+      String name = '';
+      String version = '';
+      final titleEl = container.querySelector('.is-app-category-title');
+      if (titleEl != null) {
+        final raw = titleEl.text.trim();
+        final match = RegExp(r'^(.*?)\s+(\d[\d.]*)$').firstMatch(raw);
+        if (match != null) {
+          name = match.group(1)!.trim();
+          version = match.group(2)!.trim();
+        } else {
+          name = raw;
+        }
+      }
+
+      String size = '';
+      String iosVer = '';
+      final captionEl = container.querySelector('.mdui-typo-caption');
+      if (captionEl != null) {
+        final raw = captionEl.text.trim();
+        final sizeMatch = RegExp(r'([\d.]+\s*(?:KB|MB|GB))').firstMatch(raw);
+        if (sizeMatch != null) size = sizeMatch.group(1)!;
+        final iosMatch = RegExp(r'iOS\s+([\d.]+)').firstMatch(raw);
+        if (iosMatch != null) iosVer = 'iOS ${iosMatch.group(1)}+';
+      }
+
+      if (name.isNotEmpty) {
+        apps.add(AppInfo(
+          id: id,
+          name: name,
+          version: version,
+          size: size,
+          iosVersion: iosVer,
+          iconUrl: iconUrl,
+        ));
+      }
+    }
+    return apps;
+  }
+
+  Future<List<AppInfo>> fetchAppList(String path) async {
+    final html = await _fetchHtml(path);
+    if (html == null) return [];
+    return _parseAppList(html);
+  }
+
+  Future<List<AppInfo>> searchApps(String keyword) async {
+    final encoded = Uri.encodeComponent(keyword);
+    final html = await _fetchHtml('/search.html?keyword=$encoded');
+    if (html == null) return [];
+    return _parseAppList(html);
+  }
+
+  // ============ 应用详情 ============
+  Future<AppDetail?> fetchAppDetail(String appId) async {
+    final html = await _fetchHtml('/application/$appId.html');
+    if (html == null) return null;
+    final document = html_parser.parse(html);
+
+    String name = '';
+    final titleEl = document.querySelector('title');
+    if (titleEl != null) {
+      name = titleEl.text.split(' - ').first.trim();
+    }
+
+    String iconUrl = '';
+    final imgEls = document.querySelectorAll('img');
+    for (var img in imgEls) {
+      final src = img.attributes['src'] ?? '';
+      if (src.contains('/data/icon/')) {
+        iconUrl = src.startsWith('http') ? src : '$baseUrl$src';
+        break;
+      }
+    }
+
+    String version = '';
+    String size = '';
+    final captions = document.querySelectorAll('div.mdui-float-left.mdui-typo-caption-opacity');
+    for (var i = 0; i < captions.length; i++) {
+      final text = captions[i].text.trim();
+      final next = captions[i].nextElementSibling;
+      if (text.contains('版本') && next != null) version = next.text.trim();
+      if (text.contains('大小') && next != null) size = next.text.trim();
+    }
+
+    String iosVer = '';
+    final iosEl = document.querySelector('div.mdui-float-right.mdui-typo-caption');
+    if (iosEl != null) iosVer = iosEl.text.trim();
+
+    final screenshots = <String>[];
+    document.querySelectorAll('img[src*="/data/preview/"]').forEach((img) {
+      final src = img.attributes['src'] ?? '';
+      if (src.isNotEmpty) {
+        screenshots.add(src.startsWith('http') ? src : '$baseUrl$src');
+      }
+    });
+
+    String description = '';
+    final descEl = document.querySelector('p[style*="white-space"]');
+    if (descEl != null) description = descEl.text.trim();
+
+    return AppDetail(
+      id: appId,
+      name: name,
+      version: version,
+      size: size,
+      iosVersion: iosVer,
+      iconUrl: iconUrl,
+      screenshots: screenshots,
+      description: description,
+    );
+  }
+
+  // ============ 用户信息（积分） ============
+  Future<UserInfo?> fetchUserInfo() async {
+    final html = await _fetchHtml('/user/dashboard.html');
+    if (html == null) return null;
+
+    String email = _prefs?.getString('user_email') ?? '';
+    int points = 0;
+
+    // 尝试从HTML中提取积分
+    final pointMatch = RegExp(r'(\d+)\s*(?:积分|点|credits|points)').firstMatch(html);
+    if (pointMatch != null) {
+      points = int.tryParse(pointMatch.group(1)!) ?? 0;
+    }
+
+    // 尝试提取邮箱
+    final emailMatch = RegExp(r'[\w.+-]+@[\w-]+\.[\w.-]+').firstMatch(html);
+    if (emailMatch != null) {
+      email = emailMatch.group(0)!;
+    }
+
+    return UserInfo(email: email, points: points, rawHtml: html);
+  }
+
+  // ============ 获取下载链接 ============
+  Future<Map<String, dynamic>> getDownloadLink(String appId) async {
+    try {
+      final response = await _dio.post(
+        '$baseUrl/user/api/down_the_file',
+        data: {'appId': appId},
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': '$baseUrl/select_download_method/$appId.html',
+          },
+          contentType: Headers.formUrlEncodedContentType,
+        ),
+      );
+      final body = response.data.toString();
+      if (body.trimLeft().startsWith('<')) {
+        return {'success': false, 'message': '__NOT_LOGGED_IN__'};
+      }
+      final data = jsonDecode(body);
+      if (data['status'] == 'success') {
+        final link = data['data']?['ipa_download_link'] ?? '';
+        final cost = data['data']?['cost'] ?? data['data']?['score'] ?? 0;
+        return {'success': true, 'link': link.toString(), 'cost': cost};
+      }
+      return {'success': false, 'message': data['message'] ?? '获取失败'};
+    } catch (e) {
+      return {'success': false, 'message': '网络错误: $e'};
+    }
+  }
+
+  // ============ 获取在线安装plist ============
+  Future<Map<String, dynamic>> getInstallPlist(String appId) async {
+    try {
+      final response = await _dio.post(
+        '$baseUrl/user/api/install_the_ipa',
+        data: {'appId': appId},
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': '$baseUrl/select_download_method/$appId.html',
+          },
+          contentType: Headers.formUrlEncodedContentType,
+        ),
+      );
+      final body = response.data.toString();
+      if (body.trimLeft().startsWith('<')) {
+        return {'success': false, 'message': '__NOT_LOGGED_IN__'};
+      }
+      final data = jsonDecode(body);
+      if (data['status'] == 'success') {
+        final link = data['data']?['plist_link'] ?? '';
+        return {'success': true, 'link': link.toString()};
+      }
+      return {'success': false, 'message': data['message'] ?? '获取失败'};
+    } catch (e) {
+      return {'success': false, 'message': '网络错误: $e'};
+    }
+  }
+
+  String get savedEmail => _prefs?.getString('user_email') ?? '';
+}

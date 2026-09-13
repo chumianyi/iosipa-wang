@@ -1,0 +1,26 @@
+name: iosipa_wang
+description: iosipa.wang - 88ipa签到与IPA下载工具
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  dio: ^5.4.0
+  shared_preferences: ^2.2.2
+  cached_network_image: ^3.3.1
+  url_launcher: ^6.2.5
+  html: ^0.15.0
+  flutter_animate: ^4.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
